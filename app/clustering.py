@@ -8,6 +8,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from db_operations import readData
 
+# this is a test commit
 def find_optimal_k(scaled_features, max_k=10):
     """
     Determine the optimal number of clusters (k) using the Elbow Method and Silhouette Score.
