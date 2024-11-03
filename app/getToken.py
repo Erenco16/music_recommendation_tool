@@ -2,7 +2,7 @@ import base64
 import requests
 import os
 from dotenv import load_dotenv
-from db_operations import readData
+from app.db_operations import readData
 import json
 import pandas as pd
 
