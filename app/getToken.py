@@ -18,6 +18,7 @@ def get_token():
     auth_str = f"{client_id}:{client_secret}"
     auth_bytes = auth_str.encode('utf-8')
     auth_base64 = base64.b64encode(auth_bytes).decode('utf-8')
+
     # Define the request parameters
     auth_url = 'https://accounts.spotify.com/api/token'
     headers = {
@@ -30,12 +31,9 @@ def get_token():
     # Make the POST request to get the access token
     response = requests.post(auth_url, headers=headers, data=data)
 
-    if response.status_code == 200:
-        # Extract the access token from the response
-        token = response.json().get('access_token')
-        return token
-    else:
-        return response.status_code
+
+    return response.text
+
 
 
 def get_auth_header():
