@@ -53,8 +53,7 @@ if __name__ == "__main__":
     #     Path("../lastfmdata/user_artists.dat")
     # )
     # print(user_artists_matrix)
-
     artist_retriever = ArtistRetriever()
-    artist_retriever.load_artists(Path("artists.dat"))
+    artist_retriever.load_artists(Path("/Users/godfather/Library/CloudStorage/OneDrive-Personal/MacProjects/PycharmProjects/spotifyWebApi/data/lastfmdata/artists.dat"))
     artist = artist_retriever.get_artist_name_from_id(1)
     print(artist)
