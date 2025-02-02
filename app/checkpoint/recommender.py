@@ -109,6 +109,8 @@ if __name__ == "__main__":
         print("Model created and saved to file.")
 
     print(recommender.artist_retriever.get_artist_id_from_name('Marilyn Manson'))
+    print(recommender.recommend_by_artist_list(
+        [recommender.artist_retriever.get_artist_id_from_name('Marilyn Manson')], n=10))
 
     '''
     # Recommendation examples

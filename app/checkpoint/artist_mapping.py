@@ -1,100 +1,157 @@
 import pandas as pd
 import requests
 import Levenshtein
+import urllib.parse
 
+# Function to get access token from local API
 def return_access_token():
-    # Define the URL for the request
     request_url = "http://127.0.0.1:5000/get-access-token"
-
     try:
-        # Send a GET request to the specified URL
         response = requests.get(request_url)
-
-        # Check if the request was successful (HTTP status code 200)
         if response.status_code == 200:
-            response_data = response.json()  # Assuming the response body is JSON
-            access_token = response_data.get("access_token")  # Extract 'access_token'
-
-            if access_token:
-                return access_token
-            else:
-                return response.status_code
+            response_data = response.json()
+            return response_data.get("access_token")
         else:
             print(f"Request failed. Status code: {response.status_code}")
             print("Response text:", response.text)
+            return None
     except requests.exceptions.RequestException as e:
-        # Handle any exceptions (e.g., connection errors, timeouts)
+        print(f"Request failed: {e}")
         return None
 
 # Function to calculate similarity between two strings
 def get_similarity(str1, str2):
-    # Calculate the Levenshtein distance similarity score
-    return Levenshtein.ratio(str1, str2)
+    return Levenshtein.ratio(str1.lower(), str2.lower())  # Case insensitive comparison
 
+# Function to properly format the artist name for Spotify search
+def encode_artist_search_query(artist_name):
+    cleaned_name = artist_name.replace(".", "").strip()  # Remove dots and strip spaces
+    return f"artist:{cleaned_name}"  # No encoding needed!
+
+# Function to search for an artist on Spotify
 def search_artist(artist_name, access_token):
-    # Spotify Search API endpoint
     url = "https://api.spotify.com/v1/search"
 
-    # Define query parameters
+    # Define query parameters (NO manual encoding here)
     params = {
-        "q": f"artist:{artist_name}",  # Query with the artist name
-        "type": "artist",  # Search only for artists
-        "limit": 1  # Return only the top result
+        "q": encode_artist_search_query(artist_name),  # Pass raw formatted query
+        "type": "artist",
+        "offset": 0,  # Start from the most relevant results
+        "limit": 10
     }
 
-    # Define headers with the access token for authorization
     headers = {
         "Authorization": f"Bearer {access_token}"
     }
 
-    # Send GET request
-    response = requests.get(url, headers=headers, params=params)
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        print(f"Sending a request to this URL: {response.url}")  # Debugging output
 
-    # Check if the response is successful
-    if response.status_code == 200:
-        return response.json()  # Return the JSON response
-    else:
-        # Handle errors
-        return {
-            "error": f"Failed to fetch artist data. Status Code: {response.status_code}",
-            "details": response.json()
-        }
-
-def parse_artist_json(json_data):
-    # first check if there is a valid data returned from the spotify api
-    if json_data.get('artists', {}).get('total', 0) == 0:
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Error: Failed to fetch artist data. Status Code: {response.status_code}")
+            print("Response text:", response.text)
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed: {e}")
         return None
 
-    # Access the first artist in the 'items' list
-    first_artist = json_data.get('artists', {}).get('items', [])[0]
+# Function to parse the JSON response from Spotify
+def parse_artist_json(json_data):
+    if not json_data or not json_data.get('artists') or json_data.get('artists', {}).get('total', 0) == 0:
+        return []
 
-    # Extract the 'id', 'name', and 'genres' fields
-    artist_id = first_artist.get('id')
-    artist_name = first_artist.get('name')
-    artist_genres = first_artist.get('genres', [])
+    artists = json_data.get('artists', {}).get('items', [])
+    return [
+        {
+            "id": artist.get("id"),
+            "name": artist.get("name"),
+            "genres": artist.get("genres", [])
+        }
+        for artist in artists
+    ]
 
-    # Return the extracted values
-    return {
-        "id": artist_id,
-        "name": artist_name,
-        "genres": artist_genres
-    }
-
+# Function to get a random artist from Last.fm dataset
 def get_random_artist(fpath):
-    access_token = return_access_token()
-    artist_info = search_artist("Miles Davis", access_token)
     artist_data = pd.read_csv(fpath, sep="\t")
     random_row = artist_data.sample(n=1)
-    random_artist_name = random_row["name"].values[0]
-    return random_artist_name
+    return random_row["name"].values[0]
 
 def main():
-    fpath = "/Users/godfather/Library/CloudStorage/OneDrive-Personal/MacProjects/PycharmProjects/spotifyWebApi/data/lastfmdata/artists.dat"
+    # Path to the Last.fm artists file
+    fpath = "/Users/godfather/Library/CloudStorage/OneDrive-Personal/MacProjects/PycharmProjects/spotifyWebApi/data/lastfmdata/artists.dat"  # Update as needed to match the file location
+    output_file = "artist_mapping.dat"  # Output file to save the results
+
+    # Load artists from .dat file
+    try:
+        artist_data = pd.read_csv(fpath, sep="\t")  # Assume tab-separated file
+        if "id" not in artist_data.columns or "name" not in artist_data.columns:
+            print("Error: The artists.dat file must have 'id' and 'name' columns.")
+            return
+    except Exception as e:
+        print(f"Error reading artists file: {e}")
+        return
+
+    # Get access token
     access_token = return_access_token()
-    random_artist_name = get_random_artist(fpath)
-    random_artist_data = parse_artist_json(search_artist(random_artist_name, access_token))
-    print(f"Random artist name from the lastfm dataset: {random_artist_name}")
-    print(random_artist_data)
+    if not access_token:
+        print("Error: No access token received.")
+        return
+
+    # Store results
+    results = []
+
+    # Iterate through each artist in the file
+    for index, row in artist_data.iterrows():
+        lastfm_artist_id = row["id"]
+        lastfm_artist_name = row["name"]
+
+        # Search for the artist on Spotify
+        spotify_response = search_artist(lastfm_artist_name, access_token)
+        spotify_artists = parse_artist_json(spotify_response)
+
+        # If no artists are found, skip
+        if not spotify_artists:
+            print(f"No related artist found for Last.fm artist: {lastfm_artist_name}")
+            continue
+
+        # Find the most similar artist
+        most_similar_artist = max(
+            spotify_artists,
+            key=lambda artist: get_similarity(lastfm_artist_name, artist["name"]),
+            default=None
+        )
+
+        # If no similar artist is found, skip
+        if not most_similar_artist:
+            print(f"No similar artist found on Spotify for Last.fm artist: {lastfm_artist_name}")
+            continue
+
+        # Calculate similarity score
+        similarity_score = get_similarity(lastfm_artist_name, most_similar_artist["name"])
+
+        # Collect relevant data
+        result = {
+            "lastfm_artist_id": lastfm_artist_id,
+            "lastfm_artist_name": lastfm_artist_name,
+            "spotify_artist_id": most_similar_artist["id"],
+            "spotify_artist_name": most_similar_artist["name"],
+            "similarity_score": similarity_score
+        }
+        results.append(result)
+
+        # Print progress
+        print(f"Processed: Last.fm '{lastfm_artist_name}' -> Spotify '{most_similar_artist['name']}'")
+
+    # Save results to a .dat file
+    results_df = pd.DataFrame(results)
+    try:
+        results_df.to_csv(output_file, sep="\t", index=False)
+        print(f"Results successfully saved to {output_file}.")
+    except Exception as e:
+        print(f"Error saving results to file: {e}")
 
 if __name__ == "__main__":
     main()
