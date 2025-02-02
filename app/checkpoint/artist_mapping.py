@@ -2,15 +2,33 @@ import pandas as pd
 import requests
 import Levenshtein
 import urllib.parse
+import time
 
-# Function to get access token from local API
-def return_access_token():
+# Global variables for token and retrieval time
+ACCESS_TOKEN = None
+TOKEN_RETRIEVED_TIME = None
+TOKEN_EXPIRY_TIME = 50 * 60  # 50 minutes in seconds
+
+# Global cache for search results
+artist_cache = {}
+
+# Function to get or refresh the access token
+def get_access_token():
+    global ACCESS_TOKEN, TOKEN_RETRIEVED_TIME
+
+    # Check if the token is still valid
+    if ACCESS_TOKEN and TOKEN_RETRIEVED_TIME and (time.time() - TOKEN_RETRIEVED_TIME < TOKEN_EXPIRY_TIME):
+        return ACCESS_TOKEN  # Return cached token if still valid
+
+    # Otherwise, request a new access token
     request_url = "http://127.0.0.1:5000/get-access-token"
     try:
         response = requests.get(request_url)
         if response.status_code == 200:
             response_data = response.json()
-            return response_data.get("access_token")
+            ACCESS_TOKEN = response_data.get("access_token")
+            TOKEN_RETRIEVED_TIME = time.time()  # Update retrieval time
+            return ACCESS_TOKEN
         else:
             print(f"Request failed. Status code: {response.status_code}")
             print("Response text:", response.text)
@@ -28,15 +46,36 @@ def encode_artist_search_query(artist_name):
     cleaned_name = artist_name.replace(".", "").strip()  # Remove dots and strip spaces
     return f"artist:{cleaned_name}"  # No encoding needed!
 
-# Function to search for an artist on Spotify
-def search_artist(artist_name, access_token):
-    url = "https://api.spotify.com/v1/search"
+# Function to make a request and handle rate limits
+def make_spotify_request(url, headers, params):
+    while True:
+        response = requests.get(url, headers=headers, params=params)
 
-    # Define query parameters (NO manual encoding here)
+        # Handle rate limits (429 Too Many Requests)
+        if response.status_code == 429:
+            retry_after = int(response.headers.get("Retry-After", 5))  # Default to 5 sec if missing
+            print(f"Rate limit hit! Waiting {retry_after} seconds before retrying...")
+            time.sleep(retry_after)
+        else:
+            return response
+
+# Function to search for an artist on Spotify with caching and rate-limit handling
+def search_artist(artist_name):
+    access_token = get_access_token()
+    if not access_token:
+        print("Error: No valid access token.")
+        return None
+
+    # Check if artist is in cache
+    if artist_name in artist_cache:
+        print(f"Using cached result for {artist_name}")
+        return artist_cache[artist_name]
+
+    url = "https://api.spotify.com/v1/search"
     params = {
-        "q": encode_artist_search_query(artist_name),  # Pass raw formatted query
+        "q": encode_artist_search_query(artist_name),
         "type": "artist",
-        "offset": 0,  # Start from the most relevant results
+        "offset": 0,
         "limit": 10
     }
 
@@ -44,18 +83,15 @@ def search_artist(artist_name, access_token):
         "Authorization": f"Bearer {access_token}"
     }
 
-    try:
-        response = requests.get(url, headers=headers, params=params)
-        print(f"Sending a request to this URL: {response.url}")  # Debugging output
+    # Make API request with rate-limit handling
+    response = make_spotify_request(url, headers, params)
 
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"Error: Failed to fetch artist data. Status Code: {response.status_code}")
-            print("Response text:", response.text)
-            return None
-    except requests.exceptions.RequestException as e:
-        print(f"Request failed: {e}")
+    if response.status_code == 200:
+        artist_cache[artist_name] = response.json()  # Save result in cache
+        return artist_cache[artist_name]
+    else:
+        print(f"Error: Failed to fetch artist data. Status Code: {response.status_code}")
+        print("Response text:", response.text)
         return None
 
 # Function to parse the JSON response from Spotify
@@ -79,25 +115,29 @@ def get_random_artist(fpath):
     random_row = artist_data.sample(n=1)
     return random_row["name"].values[0]
 
+# Function to ensure API requests are spaced out
+LAST_REQUEST_TIME = 0
+REQUEST_DELAY = 1.5  # Wait time between requests (1.5 sec)
+
+def throttle_request():
+    global LAST_REQUEST_TIME
+    elapsed_time = time.time() - LAST_REQUEST_TIME
+    if elapsed_time < REQUEST_DELAY:
+        time.sleep(REQUEST_DELAY - elapsed_time)  # Wait to prevent rate limits
+    LAST_REQUEST_TIME = time.time()  # Update last request time
+
 def main():
-    # Path to the Last.fm artists file
-    fpath = "/Users/godfather/Library/CloudStorage/OneDrive-Personal/MacProjects/PycharmProjects/spotifyWebApi/data/lastfmdata/artists.dat"  # Update as needed to match the file location
-    output_file = "artist_mapping.dat"  # Output file to save the results
+    fpath = "/Users/godfather/Library/CloudStorage/OneDrive-Personal/MacProjects/PycharmProjects/spotifyWebApi/data/lastfmdata/artists.dat"
+    output_file = "artist_mapping.dat"
 
     # Load artists from .dat file
     try:
-        artist_data = pd.read_csv(fpath, sep="\t")  # Assume tab-separated file
+        artist_data = pd.read_csv(fpath, sep="\t")
         if "id" not in artist_data.columns or "name" not in artist_data.columns:
             print("Error: The artists.dat file must have 'id' and 'name' columns.")
             return
     except Exception as e:
         print(f"Error reading artists file: {e}")
-        return
-
-    # Get access token
-    access_token = return_access_token()
-    if not access_token:
-        print("Error: No access token received.")
         return
 
     # Store results
@@ -108,8 +148,11 @@ def main():
         lastfm_artist_id = row["id"]
         lastfm_artist_name = row["name"]
 
+        # Ensure we don't hit the API too fast
+        throttle_request()
+
         # Search for the artist on Spotify
-        spotify_response = search_artist(lastfm_artist_name, access_token)
+        spotify_response = search_artist(lastfm_artist_name)
         spotify_artists = parse_artist_json(spotify_response)
 
         # If no artists are found, skip
