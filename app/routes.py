@@ -1,6 +1,7 @@
 from flask import Blueprint, request, jsonify
 from dotenv import load_dotenv
 from app.getToken import get_token
+import app.checkpoint.recommender as recommender_module
 import os
 
 # Load environment variables from a .env file
@@ -20,6 +21,12 @@ def get_song_details():
 @main.route('/get-access-token', methods = ['GET'])
 def get_access_token():
     return get_token()
+
+@main.route('/recommend', methods = ['GET'])
+def recommender_route():
+    artists, scores = recommender_module.main()
+    return jsonify({'artists': artists, 'scores': scores.tolist()})
+
 
 @main.route('/')
 def home():

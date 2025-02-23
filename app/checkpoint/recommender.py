@@ -11,7 +11,7 @@ import implicit
 import scipy
 import numpy as np
 
-from data import load_user_artists, ArtistRetriever
+from app.checkpoint.data import load_user_artists, ArtistRetriever
 
 class ImplicitRecommender:
     """The ImplicitRecommender class computes recommendations for a given user
@@ -79,8 +79,7 @@ class ImplicitRecommender:
         ]
         return artists, scores
 
-
-if __name__ == "__main__":
+def main():
     pickle_path = Path("recommender.pkl")
 
     if pickle_path.exists():
@@ -108,25 +107,12 @@ if __name__ == "__main__":
             pickle.dump(recommender, file)
         print("Model created and saved to file.")
 
-    print(recommender.artist_retriever.get_artist_id_from_name('Marilyn Manson'))
-    print(recommender.recommend_by_artist_list(
-        [recommender.artist_retriever.get_artist_id_from_name('Marilyn Manson')], n=10))
+    artist_id = recommender.artist_retriever.get_artist_id_from_name('Ozzy Osbourne')
+    print(artist_id)
+    # Return the recommendations instead of just printing
+    return recommender.recommend_by_artist_list([artist_id], n=10)
 
-    '''
-    # Recommendation examples
-    user_id = 2
-    artists, scores = recommender.recommend(user_id, n=10)
 
-    print(f"Recommending similar artists that user {user_id} listens to:")
-    for artist, score in zip(artists, scores):
-        print(f"{artist}: {score}")
 
-    # Recommendations based on artist list
-    artist_list = [2, 6, 7, 9, 10, 13, 25, 28, 64, 72]
-    artists, scores = recommender.recommend_by_artist_list(artist_list, n=10)
-
-    print(f"Recommending similar artists from the users listening to {[recommender.artist_retriever.get_artist_name_from_id(artist_id) for artist_id in artist_list]} mostly:")
-    for artist, score in zip(artists, scores):
-        print(f"{artist}: {score}")
-    '''
-
+if __name__ == "__main__":
+    main()
