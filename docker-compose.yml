@@ -1,0 +1,35 @@
+services:
+  flask-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flask_server
+    ports:
+      - "5001:5001"
+    networks:
+      - spotify_network
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  artist-mapping:
+    build:
+      context: .
+      dockerfile: app/checkpoint/Dockerfile
+    container_name: artist_mapping_service
+    depends_on:
+      flask-server:
+        condition: service_healthy
+    networks:
+      - spotify_network
+    restart: "no"
+    volumes:
+      - ./data:/data  # Mounts 'data' folder into the container at '/data'
+    entrypoint: ["sh", "-c", "sleep 10 && python /app/artist_mapping.py"] # adds a small delay before starting the artist_mapping service
+
+networks:
+  spotify_network:
+    driver: bridge
