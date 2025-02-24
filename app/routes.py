@@ -1,8 +1,7 @@
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, jsonify, request
 from dotenv import load_dotenv
 from app.getToken import get_token
-import app.artist_mapping.recommender as recommender_module
-import os
+import app.recommender as recommender_module
 
 # Load environment variables from a .env file
 load_dotenv()
@@ -20,7 +19,9 @@ def get_access_token():
 
 @main.route('/recommend', methods = ['GET'])
 def recommender_route():
-    artists, scores = recommender_module.main()
+    # getting the search parameter
+    search_param = request.args.get('search')
+    artists, scores = recommender_module.recommend_based_on_artist(search_param)
     return jsonify({'artists': artists, 'scores': scores.tolist()})
 
 
