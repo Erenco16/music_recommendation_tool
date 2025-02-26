@@ -10,3 +10,4 @@ seaborn==0.13.2
 SQLAlchemy==2.0.30
 Levenshtein
 CORS
+implicit
