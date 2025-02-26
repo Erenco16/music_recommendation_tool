@@ -13,7 +13,7 @@ import numpy as np
 
 from app.artist_mapping.data import load_user_artists, ArtistRetriever
 
-import search_artist as search_artist_lib
+import app.search_artist as search_artist_lib
 
 class ImplicitRecommender:
     """The ImplicitRecommender class computes recommendations for a given user
