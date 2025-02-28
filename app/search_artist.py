@@ -51,7 +51,7 @@ def return_best_match(search_term: str, threshold: float = 0.8):
         return None
 
     # Step 2: Look for a corresponding entry in artist_mapping2.dat using the candidate's name.
-    mapping_path = Path("artist_mapping2.dat")
+    mapping_path = Path("app/artist_mapping/artist_mapping_2.dat")
     mappings = load_csv(mapping_path)
     mapping_candidate, map_ratio = best_match(candidate["name"], mappings, key="lastfm_artist_name",
                                               threshold=threshold)

@@ -31,7 +31,7 @@ def recommender_route():
         if not search_param:
             return jsonify({'error': 'Missing search parameter'}), 400
 
-        artists, scores = recommender_module.recommend_based_on_artist(search_param)
+        artists, scores = recommender_module.recommend_based_on_search(search_param)
         return jsonify({'artists': artists, 'scores': scores.tolist()})
 
     except IndexError:
@@ -42,6 +42,15 @@ def recommender_route():
         logging.error("Unexpected error: %s", traceback.format_exc())
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
+
+@main.route('/recommend/genre', methods=['GET'])
+def recommend_genre():
+    genre = request.args.get('genre')
+    if not genre:
+        return jsonify({'error': 'Missing genre parameter'}), 400
+
+    artists = recommender_module.recommend_based_on_genre(genre, n=10)
+    return jsonify({'recommended_artists': artists})
 
 @main.route('/')
 def home():
