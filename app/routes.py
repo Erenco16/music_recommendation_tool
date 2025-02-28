@@ -31,7 +31,7 @@ def recommender_route():
         if not search_param:
             return jsonify({'error': 'Missing search parameter'}), 400
 
-        artists, scores = recommender_module.recommend_based_on_artist(search_param)
+        artists, scores = recommender_module.recommend_based_on_search(search_param)
         return jsonify({'artists': artists, 'scores': scores.tolist()})
 
     except IndexError:

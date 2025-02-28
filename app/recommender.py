@@ -123,6 +123,43 @@ def recommend_based_on_artist(artist_name):
     # Return the recommendations instead of just printing
     return recommender.recommend_by_artist_list([artist_id], n=10)
 
+def find_match(search_term):
+    """
+    Uses the search_artist function (from search_artist.py) to find
+    the best matching artist record based on the search_term.
+    It prints the details of the match and returns the record.
+    """
+    result = search_artist_lib.return_best_match(search_term)
+    if result:
+        print("Best match found from {}:".format(result.get("source")))
+        for key, value in result.items():
+            print(f"{key}: {value}")
+        return result
+    else:
+        print("No match found.")
+        return None
+
+def recommend_based_on_search(search_term):
+    """
+    Given a search term, this function:
+      1. Finds the best matching artist record using find_match.
+      2. Extracts the artist name from the result.
+      3. Uses the existing recommend_based_on_artist function to get recommendations.
+    """
+    match = find_match(search_term)
+    if not match:
+        return None
+
+    # Use the appropriate field for the artist name.
+    # If the record comes from artist_mapping2.dat, we expect a 'lastfm_artist_name';
+    # Otherwise, fall back to the 'name' field.
+    artist_name = match.get("lastfm_artist_name") or match.get("name")
+    if not artist_name:
+        print("No valid artist name found in the matched record.")
+        return None
+
+    # Return recommendations based on the best match.
+    return recommend_based_on_artist(artist_name)
 
 # genre based recommendation
 
