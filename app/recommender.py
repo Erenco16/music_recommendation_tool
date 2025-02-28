@@ -1,5 +1,6 @@
+import logging
 from pathlib import Path
-from typing import Tuple, List
+from typing import Tuple, List, Dict
 import pickle
 import implicit
 import scipy
@@ -139,27 +140,29 @@ def find_match(search_term):
         print("No match found.")
         return None
 
-def recommend_based_on_search(search_term):
+
+def recommend_based_on_search(search_term) -> Dict[str, any]:
     """
     Given a search term, this function:
       1. Finds the best matching artist record using find_match.
       2. Extracts the artist name from the result.
       3. Uses the existing recommend_based_on_artist function to get recommendations.
+      4. Returns the matched artist name along with the recommendations.
     """
     match = find_match(search_term)
     if not match:
         return None
 
     # Use the appropriate field for the artist name.
-    # If the record comes from artist_mapping2.dat, we expect a 'lastfm_artist_name';
-    # Otherwise, fall back to the 'name' field.
     artist_name = match.get("lastfm_artist_name") or match.get("name")
     if not artist_name:
         print("No valid artist name found in the matched record.")
         return None
 
-    # Return recommendations based on the best match.
-    return recommend_based_on_artist(artist_name)
+    # Get recommendations
+    artists, scores = recommend_based_on_artist(artist_name)
+
+    return jsonify({"matched_artist": artist_name, "artists": artists, "scores": scores.tolist()})
 
 # genre based recommendation
 
@@ -202,8 +205,9 @@ def train_genre_model():
     return als_genre_model, genre_matrix, genre_to_index
 
 
-def recommend_based_on_genre(genre_name: str, n: int = 10):
-    """Recommend artists based on a given genre."""
+def recommend_based_on_genre(genre_names: List[str], n: int = 10, exclude_ids: set = None):
+    """Recommend artists based on multiple genres, excluding specific artist IDs and ensuring uniqueness."""
+
     pickle_path = Path("als_genre_model.pkl")
     if not pickle_path.exists():
         train_genre_model()
@@ -211,14 +215,51 @@ def recommend_based_on_genre(genre_name: str, n: int = 10):
     with open(pickle_path, "rb") as file:
         genre_model, genre_matrix, genre_to_index = pickle.load(file)
 
-    if genre_name not in genre_to_index:
-        return []
-
-    genre_index = genre_to_index[genre_name]
-    artist_ids, scores = genre_model.recommend(genre_index, genre_matrix[genre_index], N=n)
-
     artist_retriever = ArtistRetriever()
     artist_retriever.load_artists(Path("data/lastfmdata/artists.dat"))
 
-    artists = [artist_retriever.get_artist_name_from_id(artist_id) for artist_id in artist_ids if artist_id in artist_retriever._artists_df.index]
-    return artists
+    artist_mapping_path = Path("data/lastfmdata/artist_mapping_2.dat")
+    if artist_mapping_path.exists():
+        artist_mapping = pd.read_csv(artist_mapping_path, sep="\t", encoding="latin1")
+    else:
+        artist_mapping = pd.DataFrame(columns=["spotify_artist_name", "spotify_artist_id"])
+
+    matched_genres = []
+    recommended_artists = set()  # Use a set to avoid duplicates
+    artist_id_mapping = {}
+
+    for genre_name in genre_names:
+        if genre_name not in genre_to_index:
+            continue  # Just skip if genre is not found
+
+        genre_index = genre_to_index[genre_name]
+
+        if genre_index >= genre_matrix.shape[0]:
+            continue  # Skip if index is out of range
+
+        try:
+            artist_ids, scores = genre_model.recommend(genre_index, genre_matrix[genre_index], N=n)
+        except IndexError:
+            continue  # Skip if recommendation fails
+
+        matched_genres.append(genre_name)
+
+        for artist_id in artist_ids:
+            if artist_id in artist_retriever._artists_df.index:
+                artist_name = artist_retriever.get_artist_name_from_id(artist_id)
+                if artist_name and (exclude_ids is None or str(artist_id) not in exclude_ids):
+                    recommended_artists.add(artist_name)
+                    spotify_id = artist_retriever.get_spotify_artist_id_from_name(artist_name, artist_mapping)
+                    artist_id_mapping[artist_name] = spotify_id if spotify_id else None
+
+    return {
+        "matched_genres": matched_genres,
+        "recommended_artists": list(recommended_artists),  # Convert set to list
+        "artist_ids": artist_id_mapping
+    }
+
+
+
+
+
+

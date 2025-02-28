@@ -30,9 +30,7 @@ def recommender_route():
         search_param = request.args.get('search')
         if not search_param:
             return jsonify({'error': 'Missing search parameter'}), 400
-
-        artists, scores = recommender_module.recommend_based_on_search(search_param)
-        return jsonify({'artists': artists, 'scores': scores.tolist()})
+        return recommender_module.recommend_based_on_search(search_param)
 
     except IndexError:
         logging.error("Artist not found in dataset: %s", search_param)
@@ -43,14 +41,43 @@ def recommender_route():
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 
-@main.route('/recommend/genre', methods=['GET'])
-def recommend_genre():
-    genre = request.args.get('genre')
-    if not genre:
-        return jsonify({'error': 'Missing genre parameter'}), 400
+import logging
 
-    artists = recommender_module.recommend_based_on_genre(genre, n=10)
-    return jsonify({'recommended_artists': artists})
+logging.basicConfig(level=logging.DEBUG)
+
+@main.route('/recommend/genre', methods=['POST'])
+def recommend_genre():
+    try:
+        # Parse incoming JSON request
+        data = request.get_json()
+        logging.debug(f"Received JSON: {data}")
+
+        if not data or "artists" not in data or "items" not in data["artists"]:
+            return jsonify({'error': 'Invalid JSON data, missing "artists.items" key'}), 400
+
+        # Extract artist IDs and genres safely
+        user_artist_ids = {
+            artist.get("id") for artist in data["artists"]["items"] if artist.get("id")
+        }
+        user_genres = {
+            genre for artist in data["artists"]["items"] if artist.get("genres") for genre in artist["genres"]
+        }
+
+        logging.debug(f"Extracted user_artist_ids: {user_artist_ids}")
+        logging.debug(f"Extracted user_genres: {user_genres}")
+
+        # Fetch recommendations for multiple genres
+        recommendations = recommender_module.recommend_based_on_genre(list(user_genres), n=10, exclude_ids=user_artist_ids)
+
+        return jsonify(recommendations)
+
+    except Exception as e:
+        logging.error("Unexpected error: %s", traceback.format_exc())
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+
+
+
+
 
 @main.route('/')
 def home():
