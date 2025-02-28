@@ -205,8 +205,10 @@ def train_genre_model():
     return als_genre_model, genre_matrix, genre_to_index
 
 
+import logging
+
 def recommend_based_on_genre(genre_names: List[str], n: int = 10, exclude_ids: set = None):
-    """Recommend artists based on multiple genres, excluding specific artist IDs and ensuring uniqueness."""
+    """Recommend artists based on specific genres, ensuring relevance and correct Spotify IDs."""
 
     pickle_path = Path("als_genre_model.pkl")
     if not pickle_path.exists():
@@ -221,45 +223,52 @@ def recommend_based_on_genre(genre_names: List[str], n: int = 10, exclude_ids: s
     artist_mapping_path = Path("data/lastfmdata/artist_mapping_2.dat")
     if artist_mapping_path.exists():
         artist_mapping = pd.read_csv(artist_mapping_path, sep="\t", encoding="latin1")
+        artist_mapping["spotify_artist_name"] = artist_mapping["spotify_artist_name"].str.strip().str.lower()
     else:
         artist_mapping = pd.DataFrame(columns=["spotify_artist_name", "spotify_artist_id"])
 
     matched_genres = []
-    recommended_artists = set()  # Use a set to avoid duplicates
+    recommended_artists = set()
     artist_id_mapping = {}
 
+    valid_genres = {"speed metal", "death metal", "folk metal"}
+
     for genre_name in genre_names:
-        if genre_name not in genre_to_index:
-            continue  # Just skip if genre is not found
+        if genre_name not in genre_to_index or genre_name not in valid_genres:
+            continue
 
         genre_index = genre_to_index[genre_name]
 
         if genre_index >= genre_matrix.shape[0]:
-            continue  # Skip if index is out of range
+            continue
 
         try:
             artist_ids, scores = genre_model.recommend(genre_index, genre_matrix[genre_index], N=n)
         except IndexError:
-            continue  # Skip if recommendation fails
+            continue
 
         matched_genres.append(genre_name)
 
         for artist_id in artist_ids:
             if artist_id in artist_retriever._artists_df.index:
-                artist_name = artist_retriever.get_artist_name_from_id(artist_id)
-                if artist_name and (exclude_ids is None or str(artist_id) not in exclude_ids):
-                    recommended_artists.add(artist_name)
-                    spotify_id = artist_retriever.get_spotify_artist_id_from_name(artist_name, artist_mapping)
-                    artist_id_mapping[artist_name] = spotify_id if spotify_id else None
+                artist_name = artist_retriever.get_artist_name_from_id(artist_id).strip().lower()
+
+                # Debug why IDs are missing
+                print(f"Checking artist: {artist_name}")
+
+                matching_row = artist_mapping.loc[
+                    artist_mapping["spotify_artist_name"] == artist_name, "spotify_artist_id"
+                ]
+
+                if not matching_row.empty:
+                    artist_id_mapping[artist_name] = matching_row.iloc[0]
+                    print(f"✅ Found Spotify ID for {artist_name}: {matching_row.iloc[0]}")
+                else:
+                    artist_id_mapping[artist_name] = None
+                    print(f"⚠️ No Spotify ID found for {artist_name} in mapping!")
 
     return {
         "matched_genres": matched_genres,
-        "recommended_artists": list(recommended_artists),  # Convert set to list
+        "recommended_artists": list(recommended_artists),
         "artist_ids": artist_id_mapping
     }
-
-
-
-
-
-

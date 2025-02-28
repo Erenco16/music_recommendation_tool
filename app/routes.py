@@ -44,7 +44,6 @@ def recommender_route():
 import logging
 
 logging.basicConfig(level=logging.DEBUG)
-
 @main.route('/recommend/genre', methods=['POST'])
 def recommend_genre():
     try:
@@ -63,20 +62,31 @@ def recommend_genre():
             genre for artist in data["artists"]["items"] if artist.get("genres") for genre in artist["genres"]
         }
 
-        logging.debug(f"Extracted user_artist_ids: {user_artist_ids}")
-        logging.debug(f"Extracted user_genres: {user_genres}")
+        print(f"Extracted user_artist_ids: {user_artist_ids}")
+        print(f"Extracted user_genres: {user_genres}")
 
         # Fetch recommendations for multiple genres
         recommendations = recommender_module.recommend_based_on_genre(list(user_genres), n=10, exclude_ids=user_artist_ids)
+        print(f"Recommendations before filtering: {recommendations}")
 
-        return jsonify(recommendations)
+        filtered_recommendations = []
+
+        for artist_name, spotify_id in recommendations["artist_ids"].items():
+            if spotify_id and spotify_id not in user_artist_ids:  # Only add new recommendations
+                filtered_recommendations.append({
+                    "external_urls": {
+                        "spotify": f"https://open.spotify.com/artist/{spotify_id}"
+                    },
+                    "id": spotify_id,
+                    "name": artist_name,
+                    "uri": f"spotify:artist:{spotify_id}"
+                })
+
+        return jsonify({"recommended_artists": filtered_recommendations})
 
     except Exception as e:
         logging.error("Unexpected error: %s", traceback.format_exc())
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
-
-
-
 
 
 @main.route('/')
