@@ -2,9 +2,7 @@ import base64
 import requests
 import os
 from dotenv import load_dotenv
-from app.db_operations import readData
 import json
-import pandas as pd
 
 load_dotenv()
 
@@ -50,14 +48,3 @@ def search_for_artist(artist_name):
         return f"No artists found with the name: {artist_name}"
     else:
         return json_result["artists"]["items"]
-
-def main():
-    test_df = readData.read_db(1)
-    artist_name = test_df.artist_name
-    artist_info = search_for_artist(artist_name)[0]
-    artist_url = artist_info["external_urls"]["spotify"]
-    print(artist_info)
-
-
-if __name__ == '__main__':
-    main()

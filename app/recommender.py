@@ -1,19 +1,18 @@
-"""This module features the ImplicitRecommender class that performs
-recommendation using the implicit library.
-"""
-
-
 from pathlib import Path
 from typing import Tuple, List
 import pickle
-
 import implicit
 import scipy
+import scipy.sparse as sp
 import numpy as np
-
+import pandas as pd
+from flask import Blueprint, jsonify, request
 from app.artist_mapping.data import load_user_artists, ArtistRetriever
-
 import app.search_artist as search_artist_lib
+
+# Blueprint setup
+main = Blueprint('main', __name__)
+
 
 class ImplicitRecommender:
     """The ImplicitRecommender class computes recommendations for a given user
@@ -23,35 +22,43 @@ class ImplicitRecommender:
         - artist_retriever: an ArtistRetriever instance
         - implicit_model: an implicit model
         - user_artists: the user-artists matrix
+        - genre_model: ALS model for genre recommendations
+        - genre_matrix: user-genre matrix
     """
 
     def __init__(
-        self,
-        artist_retriever: ArtistRetriever,
-        implicit_model: implicit.recommender_base.RecommenderBase,
-        user_artists: scipy.sparse.csr_matrix,
+            self,
+            artist_retriever: ArtistRetriever,
+            implicit_model: implicit.recommender_base.RecommenderBase,
+            user_artists: sp.csr_matrix,
+            genre_model: implicit.als.AlternatingLeastSquares = None,
+            genre_matrix: sp.csr_matrix = None,
+            genre_to_index: dict = None
     ):
         self.artist_retriever = artist_retriever
         self.implicit_model = implicit_model
         self.user_artists = user_artists
+        self.genre_model = genre_model
+        self.genre_matrix = genre_matrix
+        self.genre_to_index = genre_to_index
 
     def fit(self) -> None:
-        """Fit the model to the user artists matrix."""
+        """Fit the ALS model to the user-artist matrix."""
         self.implicit_model.fit(self.user_artists)
 
-    def recommend(self, user_id: int, n: int = 10) -> Tuple[List[str], List[float]]:
-        """Return the top n recommendations for the given user."""
-        artist_ids, scores = self.implicit_model.recommend(
-            user_id, self.user_artists[user_id], N=n
-        )
-        artists = [
-            self.artist_retriever.get_artist_name_from_id(artist_id)
-            for artist_id in artist_ids
-        ]
+    def recommend_by_genre(self, genre: str, n: int = 10) -> Tuple[List[str], List[float]]:
+        """Return the top n recommended artists for a given genre."""
+        if genre not in self.genre_to_index:
+            return [], []
+
+        genre_index = self.genre_to_index[genre]
+        artist_ids, scores = self.genre_model.recommend(genre_index, self.genre_matrix[genre_index], N=n)
+        artists = [self.artist_retriever.get_artist_name_from_id(artist_id) for artist_id in artist_ids if
+                   artist_id in self.artist_retriever._artists_df.index]
         return artists, scores
 
     def recommend_by_artist_list(
-        self, artist_id_list: list, n: int = 10
+            self, artist_id_list: list, n: int = 10
     ) -> Tuple[List[str], List[float]]:
         """Return the top n recommendations for the given artist list."""
 
@@ -80,6 +87,8 @@ class ImplicitRecommender:
             for artist_id in artist_ids
         ]
         return artists, scores
+
+# artist based recommendation
 
 def recommend_based_on_artist(artist_name):
     pickle_path = Path("recommender.pkl")
@@ -114,40 +123,65 @@ def recommend_based_on_artist(artist_name):
     # Return the recommendations instead of just printing
     return recommender.recommend_by_artist_list([artist_id], n=10)
 
-def find_match(search_term):
-    """
-    Uses the search_artist function (from search_artist.py) to find
-    the best matching artist record based on the search_term.
-    It prints the details of the match and returns the record.
-    """
-    result = search_artist_lib.return_best_match(search_term)
-    if result:
-        print("Best match found from {}:".format(result.get("source")))
-        for key, value in result.items():
-            print(f"{key}: {value}")
-        return result
-    else:
-        print("No match found.")
-        return None
 
-def recommend_based_on_search(search_term):
-    """
-    Given a search term, this function:
-      1. Finds the best matching artist record using find_match.
-      2. Extracts the artist name from the result.
-      3. Uses the existing recommend_based_on_artist function to get recommendations.
-    """
-    match = find_match(search_term)
-    if not match:
-        return None
+# genre based recommendation
 
-    # Use the appropriate field for the artist name.
-    # If the record comes from artist_mapping2.dat, we expect a 'lastfm_artist_name';
-    # Otherwise, fall back to the 'name' field.
-    artist_name = match.get("lastfm_artist_name") or match.get("name")
-    if not artist_name:
-        print("No valid artist name found in the matched record.")
-        return None
+def create_user_genre_matrix():
+    """Create a user-genre interaction matrix from Last.fm dataset."""
+    df_user_artists = pd.read_csv("data/lastfmdata/user_artists.dat", sep="\t", encoding="latin1")
+    df_tags = pd.read_csv("data/lastfmdata/user_taggedartists.dat", sep="\t", encoding="latin1")
+    df_tag_names = pd.read_csv("data/lastfmdata/tags.dat", sep="\t", encoding="latin1")
 
-    # Return recommendations based on the best match.
-    return recommend_based_on_artist(artist_name)
+    df_tags = df_tags.merge(df_tag_names, on='tagID', how='left')
+    df_user_genre = df_user_artists.merge(df_tags, on="artistID", how="inner")
+
+    if "userID_x" in df_user_genre.columns:
+        df_user_genre.rename(columns={"userID_x": "userID"}, inplace=True)
+    if "userID_y" in df_user_genre.columns:
+        df_user_genre.drop(columns=["userID_y"], inplace=True)
+
+    df_user_genre = df_user_genre.groupby(["userID", "tagValue"])['weight'].sum().reset_index()
+
+    user_to_index = {user: i for i, user in enumerate(df_user_genre["userID"].unique())}
+    genre_to_index = {genre: i for i, genre in enumerate(df_user_genre["tagValue"].unique())}
+
+    rows = df_user_genre["userID"].map(user_to_index)
+    cols = df_user_genre["tagValue"].map(genre_to_index)
+    data = df_user_genre["weight"]
+
+    user_genre_matrix = sp.csr_matrix((data, (rows, cols)), shape=(len(user_to_index), len(genre_to_index)))
+    return user_genre_matrix, genre_to_index
+
+
+def train_genre_model():
+    """Train ALS model for genre recommendations."""
+    genre_matrix, genre_to_index = create_user_genre_matrix()
+    als_genre_model = implicit.als.AlternatingLeastSquares(factors=50, iterations=10, regularization=0.01)
+    als_genre_model.fit(genre_matrix)
+
+    with open("als_genre_model.pkl", "wb") as file:
+        pickle.dump((als_genre_model, genre_matrix, genre_to_index), file)
+
+    return als_genre_model, genre_matrix, genre_to_index
+
+
+def recommend_based_on_genre(genre_name: str, n: int = 10):
+    """Recommend artists based on a given genre."""
+    pickle_path = Path("als_genre_model.pkl")
+    if not pickle_path.exists():
+        train_genre_model()
+
+    with open(pickle_path, "rb") as file:
+        genre_model, genre_matrix, genre_to_index = pickle.load(file)
+
+    if genre_name not in genre_to_index:
+        return []
+
+    genre_index = genre_to_index[genre_name]
+    artist_ids, scores = genre_model.recommend(genre_index, genre_matrix[genre_index], N=n)
+
+    artist_retriever = ArtistRetriever()
+    artist_retriever.load_artists(Path("data/lastfmdata/artists.dat"))
+
+    artists = [artist_retriever.get_artist_name_from_id(artist_id) for artist_id in artist_ids if artist_id in artist_retriever._artists_df.index]
+    return artists

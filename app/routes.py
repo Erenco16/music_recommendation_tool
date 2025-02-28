@@ -43,6 +43,15 @@ def recommender_route():
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 
+@main.route('/recommend/genre', methods=['GET'])
+def recommend_genre():
+    genre = request.args.get('genre')
+    if not genre:
+        return jsonify({'error': 'Missing genre parameter'}), 400
+
+    artists = recommender_module.recommend_based_on_genre(genre, n=10)
+    return jsonify({'recommended_artists': artists})
+
 @main.route('/')
 def home():
     """
