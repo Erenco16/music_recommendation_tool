@@ -8,6 +8,7 @@ from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from db_operations import readData
 
+# this is a test commit
 def find_optimal_k(scaled_features, max_k=10):
     """
     Determine the optimal number of clusters (k) using the Elbow Method and Silhouette Score.
@@ -75,15 +76,15 @@ def df_operations(data):
     user_features = pd.DataFrame()
 
     # Calculate track count
-    track_count = data.groupby('user_id')['track_name'].nunique().reset_index()
+    track_count = data.groupby('user_id')['track'].nunique().reset_index()
     track_count.columns = ['user_id', 'track_count']
 
     # Calculate playlist count
-    playlist_count = data.groupby('user_id')['playlist_name'].nunique().reset_index()
+    playlist_count = data.groupby('user_id')['playlist'].nunique().reset_index()
     playlist_count.columns = ['user_id', 'playlist_count']
 
     # Calculate artist diversity
-    artist_diversity = data.groupby('user_id')['artist_name'].nunique().reset_index()
+    artist_diversity = data.groupby('user_id')['artist'].nunique().reset_index()
     artist_diversity.columns = ['user_id', 'artist_diversity']
 
     # Merge all features into a single DataFrame
@@ -108,8 +109,8 @@ def df_operations(data):
 
 
 def main():
-    # Load your dataset
-    data = df_operations(readData.read_db(100000))
+    # read_csv function randomly picks 50% of the data that's in the csv file
+    data = df_operations(readData.read_csv('../data/spotify_million_playlists_dataset/spotify_dataset.csv'))
     # Example feature engineering
     features = data[['track_count', 'playlist_count', 'artist_diversity', 'user_activity_metric']]  # Adjust as needed
 

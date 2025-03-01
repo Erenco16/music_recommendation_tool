@@ -1,0 +1,20 @@
+services:
+  flask-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flask_server
+    ports:
+      - "5001:5001"
+    networks:
+      - spotify_network
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  spotify_network:
+    driver: bridge
