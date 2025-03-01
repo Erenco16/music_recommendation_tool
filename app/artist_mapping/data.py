@@ -39,6 +39,13 @@ class ArtistRetriever:
     def get_artist_id_from_name(self, artist_name: str) -> int:
         return self._artists_df[self._artists_df['name'] == artist_name].index[0]
 
+    def get_spotify_artist_id_from_name(self, artist_name, artist_mapping):
+        """Retrieve the Spotify artist ID from the artist name."""
+        match = artist_mapping[artist_mapping["spotify_artist_name"] == artist_name]
+        if not match.empty:
+            return match.iloc[0]["spotify_artist_id"]
+        return None
+
     def load_artists(self, artists_file: Path) -> None:
         """Load the artists file and stores it as a Pandas dataframe in a
         private attribute.
