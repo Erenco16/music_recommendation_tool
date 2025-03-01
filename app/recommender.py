@@ -168,20 +168,27 @@ def recommend_based_on_search(search_term) -> Dict[str, any]:
 
 def create_user_genre_matrix():
     """Create a user-genre interaction matrix from Last.fm dataset."""
+
     df_user_artists = pd.read_csv("data/lastfmdata/user_artists.dat", sep="\t", encoding="latin1")
     df_tags = pd.read_csv("data/lastfmdata/user_taggedartists.dat", sep="\t", encoding="latin1")
     df_tag_names = pd.read_csv("data/lastfmdata/tags.dat", sep="\t", encoding="latin1")
 
+    # Merge genre tags with tag names
     df_tags = df_tags.merge(df_tag_names, on='tagID', how='left')
+
+    # Merge user-artist interaction data with genre tags
     df_user_genre = df_user_artists.merge(df_tags, on="artistID", how="inner")
 
+    # Fix column naming issues
     if "userID_x" in df_user_genre.columns:
         df_user_genre.rename(columns={"userID_x": "userID"}, inplace=True)
     if "userID_y" in df_user_genre.columns:
         df_user_genre.drop(columns=["userID_y"], inplace=True)
 
+    # Sum interactions per user-genre pair
     df_user_genre = df_user_genre.groupby(["userID", "tagValue"])['weight'].sum().reset_index()
 
+    # Map users and genres to matrix indices
     user_to_index = {user: i for i, user in enumerate(df_user_genre["userID"].unique())}
     genre_to_index = {genre: i for i, genre in enumerate(df_user_genre["tagValue"].unique())}
 
@@ -190,85 +197,189 @@ def create_user_genre_matrix():
     data = df_user_genre["weight"]
 
     user_genre_matrix = sp.csr_matrix((data, (rows, cols)), shape=(len(user_to_index), len(genre_to_index)))
+
     return user_genre_matrix, genre_to_index
 
 
 def train_genre_model():
     """Train ALS model for genre recommendations."""
+
     genre_matrix, genre_to_index = create_user_genre_matrix()
-    als_genre_model = implicit.als.AlternatingLeastSquares(factors=50, iterations=10, regularization=0.01)
+
+    # Train ALS model
+    als_genre_model = implicit.als.AlternatingLeastSquares(
+        factors=100,  # Increase factors for better embedding
+        iterations=15,  # More iterations for better convergence
+        regularization=0.05  # Adjusted to prevent overfitting
+    )
     als_genre_model.fit(genre_matrix)
 
+    # Save model
     with open("als_genre_model.pkl", "wb") as file:
         pickle.dump((als_genre_model, genre_matrix, genre_to_index), file)
 
     return als_genre_model, genre_matrix, genre_to_index
 
 
-import logging
+def get_artists_by_genre(tagIDs, tagged_artists_df, n=10, exclude_ids=None):
+    """Fetch top artists for the given genre IDs."""
 
-def recommend_based_on_genre(genre_names: List[str], n: int = 10, exclude_ids: set = None):
-    """Recommend artists based on specific genres, ensuring relevance and correct Spotify IDs."""
+    if not isinstance(tagged_artists_df, pd.DataFrame):
+        raise ValueError("Expected tagged_artists_df to be a DataFrame, but got {}".format(type(tagged_artists_df)))
 
+    if "tagID" not in tagged_artists_df.columns or "artistID" not in tagged_artists_df.columns:
+        raise KeyError("Missing required columns 'tagID' or 'artistID' in tagged_artists_df")
+
+    if not isinstance(tagIDs, list):
+        print(f"⚠️ Expected tagIDs to be a list, but got {type(tagIDs)}. Converting to list.")
+        tagIDs = [tagIDs]  # Convert string/int to list
+
+    matched_artists = tagged_artists_df[tagged_artists_df["tagID"].isin(tagIDs)]
+
+    # Exclude certain artists if needed
+    if exclude_ids:
+        matched_artists = matched_artists[~matched_artists["artistID"].isin(exclude_ids)]
+
+    # Select top N artists
+    return matched_artists["artistID"].value_counts().head(n).index.tolist()
+
+
+def load_artist_mapping():
+    """Loads the artist mapping from lastfm to Spotify, ensuring proper lookup."""
+    artist_mapping_path = Path("app/artist_mapping/artist_mapping_2.dat")
+
+    if not artist_mapping_path.exists():
+        print("⚠️ Artist mapping file not found.")
+        return {}
+
+    # Load artist mapping file
+    artist_mapping_df = pd.read_csv(artist_mapping_path, sep="\t", encoding="latin1")
+
+    # Ensure all artist names are strings to avoid lookup issues
+    artist_mapping_df["lastfm_artist_name"] = artist_mapping_df["lastfm_artist_name"].astype(str).str.strip()
+    artist_mapping_df["spotify_artist_name"] = artist_mapping_df["spotify_artist_name"].astype(str).str.strip()
+    artist_mapping_df["spotify_artist_id"] = artist_mapping_df["spotify_artist_id"].astype(str).str.strip()
+
+    # ✅ Fix: Index by `lastfm_artist_name` so we can find Spotify IDs correctly
+    return artist_mapping_df.set_index("lastfm_artist_name")["spotify_artist_id"].to_dict()
+
+
+def recommend_based_on_genre(user_genres: list, n: int = 10, exclude_ids: set = None):
+    """
+    Recommend artists based on a given list of genres.
+
+    :param user_genres: List of genres from the user input.
+    :param n: Number of recommendations per genre.
+    :param exclude_ids: Set of artist IDs to exclude (the ones user already follows).
+    :return: Dictionary containing matched genres, recommended artists, and their Spotify IDs.
+    """
+
+    # Load trained ALS genre model
     pickle_path = Path("als_genre_model.pkl")
     if not pickle_path.exists():
-        train_genre_model()
+        logging.error("ALS genre model file not found. Train it first.")
+        return {"matched_genres": [], "recommended_artists": [], "artist_ids": {}}
 
     with open(pickle_path, "rb") as file:
         genre_model, genre_matrix, genre_to_index = pickle.load(file)
 
+    # Load artist retriever
     artist_retriever = ArtistRetriever()
     artist_retriever.load_artists(Path("data/lastfmdata/artists.dat"))
 
-    artist_mapping_path = Path("data/lastfmdata/artist_mapping_2.dat")
-    if artist_mapping_path.exists():
-        artist_mapping = pd.read_csv(artist_mapping_path, sep="\t", encoding="latin1")
-        artist_mapping["spotify_artist_name"] = artist_mapping["spotify_artist_name"].str.strip().str.lower()
-    else:
-        artist_mapping = pd.DataFrame(columns=["spotify_artist_name", "spotify_artist_id"])
+    # Load artist mapping (Spotify ID lookup)
+    artist_mapping = load_artist_mapping()
+
+    # Load genre mapping from tags.dat
+    genre_mapping = search_artist_lib.load_genre_mapping()
+
+    # Load tagged artist data
+    tagged_artists_df = pd.DataFrame(search_artist_lib.load_user_tagged_artists())
+    tagged_artists_df["tagID"] = pd.to_numeric(tagged_artists_df["tagID"], errors="coerce")
 
     matched_genres = []
-    recommended_artists = set()
+    recommended_artists = set()  # Use a set to avoid duplicates
     artist_id_mapping = {}
 
-    valid_genres = {"speed metal", "death metal", "folk metal"}
+    for genre in user_genres:
+        match = search_artist_lib.best_genre_match(genre, genre_mapping, threshold=0.8)
 
-    for genre_name in genre_names:
-        if genre_name not in genre_to_index or genre_name not in valid_genres:
-            continue
+        if not match:
+            logging.warning(f"⚠️ No match found for genre '{genre}', skipping...")
+            continue  # Skip unmatched genres
 
-        genre_index = genre_to_index[genre_name]
+        tagID = match["tagID"]
+        matched_genres.append(match["genre"])  # Add matched genre name
 
-        if genre_index >= genre_matrix.shape[0]:
-            continue
+        # Get artists tagged with this genre
+        genre_artists = tagged_artists_df[tagged_artists_df["tagID"] == int(tagID)]
 
-        try:
-            artist_ids, scores = genre_model.recommend(genre_index, genre_matrix[genre_index], N=n)
-        except IndexError:
-            continue
+        if genre_artists.empty:
+            logging.warning(f"⚠️ No artists found for genre '{match['genre']}' (tagID {tagID})!")
+            continue  # Skip if no artists found
 
-        matched_genres.append(genre_name)
+        # Select top N artists from the genre
+        top_artist_ids = genre_artists["artistID"].value_counts().head(n).index.tolist()
 
-        for artist_id in artist_ids:
-            if artist_id in artist_retriever._artists_df.index:
-                artist_name = artist_retriever.get_artist_name_from_id(artist_id).strip().lower()
+        for artist_id in top_artist_ids:
+            try:
+                artist_id = int(artist_id)  # Ensure artist ID is an integer
+                print(f"🔎 Looking up artist ID: {artist_id}")  # Debugging line
 
-                # Debug why IDs are missing
-                print(f"Checking artist: {artist_name}")
+                if artist_id not in artist_retriever._artists_df.index:
+                    print(f"⚠️ Skipping artist ID {artist_id}: Not found in dataset!")
+                    continue  # Skip missing artists
 
-                matching_row = artist_mapping.loc[
-                    artist_mapping["spotify_artist_name"] == artist_name, "spotify_artist_id"
-                ]
+                artist_name = artist_retriever.get_artist_name_from_id(artist_id)
+                print(f"✅ Found artist: {artist_name} for ID {artist_id}")  # Debugging line
 
-                if not matching_row.empty:
-                    artist_id_mapping[artist_name] = matching_row.iloc[0]
-                    print(f"✅ Found Spotify ID for {artist_name}: {matching_row.iloc[0]}")
-                else:
-                    artist_id_mapping[artist_name] = None
-                    print(f"⚠️ No Spotify ID found for {artist_name} in mapping!")
+                if not artist_name:
+                    print(f"⚠️ No name found for artist ID {artist_id}, skipping...")
+                    continue  # Skip if no name found
+
+                # Exclude artists user already follows
+                if exclude_ids and artist_mapping.get(artist_name) in exclude_ids:
+                    print(f"⚠️ Excluding artist {artist_name} (ID {artist_id}) because user already follows.")
+                    continue
+
+                recommended_artists.add(artist_name)  # Add to recommendation set
+                artist_id_mapping[artist_name] = artist_mapping.get(artist_name, "Unknown ID")
+
+            except Exception as e:
+                logging.error(f"⚠️ Error processing artist ID {artist_id}: {e}")
+                continue  # Skip artist on error
 
     return {
         "matched_genres": matched_genres,
         "recommended_artists": list(recommended_artists),
         "artist_ids": artist_id_mapping
     }
+
+
+def load_artist_metadata():
+    """Load the artist metadata from a CSV file, ensuring it is a DataFrame."""
+
+    file_path = "data/lastfmdata/artists.dat"
+
+    try:
+        artists_df = pd.read_csv(file_path, sep="\t", encoding="latin1")
+
+        # **✅ Ensure `artists_df` is a DataFrame**
+        if not isinstance(artists_df, pd.DataFrame):
+            raise ValueError(f"⚠️ Expected artists_df to be a DataFrame, but got {type(artists_df)}")
+
+        if "id" not in artists_df.columns or "name" not in artists_df.columns:
+            raise KeyError("⚠️ Missing required columns 'id' or 'name' in artists.dat")
+
+        artist_mapping = dict(zip(artists_df["id"], artists_df["name"]))  # {artistID: artistName}
+        logging.info(f"✅ Artist metadata loaded successfully with {len(artist_mapping)} entries.")
+
+        return artist_mapping
+
+    except FileNotFoundError:
+        logging.error(f"⚠️ Artist metadata file not found at {file_path}")
+        return {}
+
+    except Exception as e:
+        logging.error(f"⚠️ Error loading artist metadata: {e}")
+        return {}

@@ -5,6 +5,7 @@ import app.recommender as recommender_module
 import logging
 import traceback
 
+
 # Load environment variables from a .env file
 load_dotenv()
 
@@ -41,52 +42,67 @@ def recommender_route():
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
 
-import logging
+def clean_recommendations(recommended_artists):
+    """
+    Cleans the recommended artist list by:
+    - Removing artists with 'Unknown ID'
+    - Fixing 'Unknown Artist' names if a valid ID is present
+    """
+    cleaned_artists = []
 
-logging.basicConfig(level=logging.DEBUG)
+    for artist in recommended_artists:
+        artist_ids = artist.get("id", [])
+        # Skip artists if "Unknown ID" is in the IDs
+        if "Unknown ID" in artist_ids:
+            continue
+        # If the name is "Unknown Artist" but a valid ID exists, use the valid ID as the name
+        if artist["name"] == "Unknown Artist" and len(artist_ids) > 0:
+            artist["name"] = artist_ids[0]
+        cleaned_artists.append(artist)
+
+    return cleaned_artists
+
+
+
 @main.route('/recommend/genre', methods=['POST'])
 def recommend_genre():
     try:
-        # Parse incoming JSON request
         data = request.get_json()
-        logging.debug(f"Received JSON: {data}")
+        user_genres = set()
+        user_artist_ids = set()
 
-        if not data or "artists" not in data or "items" not in data["artists"]:
-            return jsonify({'error': 'Invalid JSON data, missing "artists.items" key'}), 400
+        # Extract user genres and artist IDs from Spotify data
+        for artist in data.get("artists", {}).get("items", []):
+            user_artist_ids.add(artist["id"])  # Followed artist IDs from Spotify
+            user_genres.update(artist.get("genres", []))  # Genres from user's followed artists
 
-        # Extract artist IDs and genres safely
-        user_artist_ids = {
-            artist.get("id") for artist in data["artists"]["items"] if artist.get("id")
-        }
-        user_genres = {
-            genre for artist in data["artists"]["items"] if artist.get("genres") for genre in artist["genres"]
-        }
-
-        print(f"Extracted user_artist_ids: {user_artist_ids}")
-        print(f"Extracted user_genres: {user_genres}")
-
-        # Fetch recommendations for multiple genres
+        # Get recommendations (this returns a dictionary with keys:
+        # "matched_genres", "recommended_artists" (a set of artist names),
+        # and "artist_ids" (a dict mapping artist names to Spotify IDs))
         recommendations = recommender_module.recommend_based_on_genre(list(user_genres), n=10, exclude_ids=user_artist_ids)
-        print(f"Recommendations before filtering: {recommendations}")
+        artist_mapping = recommender_module.load_artist_metadata()
 
-        filtered_recommendations = []
+        # Build a list of raw recommendations from the recommended artist names
+        raw_recommendations = []
+        for artist_name in recommendations["recommended_artists"]:
+            # Use the Spotify ID from the recommendation dict (if found); otherwise "Unknown ID"
+            spotify_id = recommendations["artist_ids"].get(artist_name, "Unknown ID")
+            # Here we form the structure: "id": [artist_name, spotify_id] (as in your previous structure)
+            raw_recommendations.append({"name": artist_name, "id": [artist_name, spotify_id]})
 
-        for artist_name, spotify_id in recommendations["artist_ids"].items():
-            if spotify_id and spotify_id not in user_artist_ids:  # Only add new recommendations
-                filtered_recommendations.append({
-                    "external_urls": {
-                        "spotify": f"https://open.spotify.com/artist/{spotify_id}"
-                    },
-                    "id": spotify_id,
-                    "name": artist_name,
-                    "uri": f"spotify:artist:{spotify_id}"
-                })
+        # Clean the recommendations: remove entries with "Unknown ID" and fix names if possible
+        cleaned_recommendations = clean_recommendations(raw_recommendations)
 
-        return jsonify({"recommended_artists": filtered_recommendations})
+        return jsonify({
+            "matched_genres": recommendations["matched_genres"],
+            "recommended_artists": cleaned_recommendations
+        })
 
     except Exception as e:
-        logging.error("Unexpected error: %s", traceback.format_exc())
-        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+        logging.error(f"Unexpected error: {e}", exc_info=True)
+        return jsonify({"error": "Internal server error", "message": str(e)}), 500
+
+
 
 
 @main.route('/')
