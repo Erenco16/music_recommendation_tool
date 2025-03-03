@@ -22,15 +22,12 @@ jobs:
 
     - name: Login to Amazon ECR
       run: |
-        echo "Logging in to Amazon ECR..."
         aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
 
     - name: Build and Push Docker Image to ECR
       run: |
         IMAGE_URI=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
-        echo "Building Docker image: $IMAGE_URI"
         docker build -t $IMAGE_URI .
-        echo "Pushing Docker image to ECR..."
         docker push $IMAGE_URI
 
     - name: SSH into EC2 and Deploy
@@ -40,23 +37,10 @@ jobs:
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
-          echo "Logging into AWS ECR from EC2..."
-          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | sudo docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-
-          echo "Stopping and removing existing container (if any)..."
-          sudo docker stop flask_server || true
-          sudo docker rm -f flask_server || true  # Force remove the container
-
-          echo "Removing old Docker images to free up space..."
-          sudo docker system prune -af || true
-
-          echo "Pulling latest Docker image from ECR..."
-          sudo docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
-
-          echo "Starting new container..."
-          sudo docker run -d --name flask_server -p 5001:5001 \
-            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
-
-          echo "Deployment complete!"
-        
-    
+          aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+          docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+          CONTAINER_ID=$(docker ps -q --filter "name=flask_server")
+          if [ ! -z "$CONTAINER_ID" ]; then
+            sudo kill $(docker inspect --format '{{.State.Pid}}' $CONTAINER_ID)
+          fi
+          docker run -d --name flask_server -p 5001:5001 ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
