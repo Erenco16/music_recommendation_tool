@@ -31,9 +31,7 @@ def recommender_route():
         search_param = request.args.get('search')
         if not search_param:
             return jsonify({'error': 'Missing search parameter'}), 400
-        result = recommender_module.recommend_based_on_search(search_param)
-        if not result:
-            return jsonify({'error': 'No artists found with the given search parameter'}), 400
+        return recommender_module.recommend_based_on_search(search_param)
 
     except IndexError:
         logging.error("Artist not found in dataset: %s", search_param)
