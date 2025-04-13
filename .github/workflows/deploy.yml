@@ -37,10 +37,20 @@ jobs:
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
+          # Login to ECR
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-          docker pull ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
-          CONTAINER_ID=$(docker ps -q --filter "name=flask_server")
-          if [ ! -z "$CONTAINER_ID" ]; then
-            sudo kill $(docker inspect --format '{{.State.Pid}}' $CONTAINER_ID)
+          
+          # Clean up unused images and containers on EC2
+          docker image prune -af
+          docker container prune -f
+          
+          # Remove existing container if it exists
+          if docker ps -a --format '{{.Names}}' | grep -Eq '^flask_server$'; then
+            docker stop flask_server
+            docker rm flask_server
           fi
-          docker run -d --name flask_server -p 5001:5001 ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+
+          # Pull latest image and run it
+          IMAGE=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+          docker pull $IMAGE
+          docker run -d --name flask_server -p 5001:5001 $IMAGE
