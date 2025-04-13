@@ -37,20 +37,34 @@ jobs:
         username: ${{ secrets.EC2_USER }}
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
-          # Login to ECR
+          echo ">>> Logging into ECR..."
           aws ecr get-login-password --region ${{ secrets.AWS_REGION }} | docker login --username AWS --password-stdin ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
-          
-          # Clean up unused images and containers on EC2
-          docker image prune -af
-          docker container prune -f
-          
-          # Remove existing container if it exists
+
+          echo ">>> Freeing up disk space on EC2..."
+          docker stop $(docker ps -aq) || true
+          docker rm $(docker ps -aq) || true
+          docker rmi -f $(docker images -aq) || true
+          docker system prune -af || true
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo apt-get clean
+          sudo rm -rf /tmp/*
+          sudo journalctl --vacuum-time=1d
+
+          echo ">>> Disk usage BEFORE image pull:"
+          df -h
+
+          echo ">>> Pulling latest Docker image from ECR..."
+          IMAGE=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
+          docker pull $IMAGE
+
+          echo ">>> Stopping and removing previous container (if exists)..."
           if docker ps -a --format '{{.Names}}' | grep -Eq '^flask_server$'; then
             docker stop flask_server
             docker rm flask_server
           fi
 
-          # Pull latest image and run it
-          IMAGE=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/${{ secrets.ECR_REPOSITORY }}:latest
-          docker pull $IMAGE
+          echo ">>> Running updated Flask container..."
           docker run -d --name flask_server -p 5001:5001 $IMAGE
+
+          echo ">>> Disk usage AFTER deployment:"
+          df -h
